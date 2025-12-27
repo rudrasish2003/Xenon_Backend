@@ -6,16 +6,14 @@ from pydantic import BaseModel
 from bson import ObjectId, Binary
 from typing import Optional
 import uvicorn
+from dotenv import load_dotenv
 
 app = FastAPI()
 
-# --- Database Configuration ---
-# Your credentials included here
-MONGO_USER = "soumyadeepta"
-MONGO_PASS = "xenon123"
- 
-MONGO_URI = f"mongodb+srv://soumyadeepta:xenon123@cluster0.zabrjd8.mongodb.net/?appName=Cluster0"
+load_dotenv()
 
+# Get the full URI directly from the environment
+MONGO_URI = os.getenv("MONGO_URI")
 client = AsyncIOMotorClient(MONGO_URI)
 db = client.player_db
 collection = db.players
