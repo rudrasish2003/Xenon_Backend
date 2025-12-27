@@ -15,12 +15,11 @@ load_dotenv()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins (React, Mobile, Postman, etc.)
+    allow_origins=["*"],  # Allows all origins
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods (GET, POST, PUT, DELETE)
+    allow_methods=["*"],  # Allows all methods
     allow_headers=["*"],  # Allows all headers
 )
-
 
 # Get the full URI directly from the environment
 MONGO_URI = os.getenv("MONGO_URI")
@@ -32,18 +31,41 @@ collection = db.players
 def player_helper(player) -> dict:
     """
     Converts MongoDB document to a JSON-friendly dictionary.
-    We exclude the raw binary photo data from the general JSON response to keep it light.
+    Now includes Stats and automatically calculates Unbeaten %.
     """
+    # 1. Fetch Stats (Default to 0 if not present)
+    matches = player.get("matches_played", 0)
+    wins = player.get("wins", 0)
+    draws = player.get("draws", 0)
+    loss = player.get("loss", 0)
+
+    # 2. Calculate Unbeaten % (Read-Only Logic)
+    # Formula: (Wins + Draws) / Total Matches * 100
+    if matches > 0:
+        non_losing_games = wins + draws
+        unbeaten_pct = round((non_losing_games / matches) * 100, 2)
+    else:
+        unbeaten_pct = 0.0
+
     return {
         "id": str(player["_id"]),
         "name": player["name"],
         "dob": player["dob"],
         "instagram_link": player["instagram_link"],
         "facebook_link": player["facebook_link"],
-        "photo_url": f"/players/{str(player['_id'])}/photo"  # Link to fetch image
+        "photo_url": f"/players/{str(player['_id'])}/photo",
+        
+        # New Stats Fields
+        "matches_played": matches,
+        "wins": wins,
+        "draws": draws,
+        "loss": loss,
+        "unbeaten_percentage": unbeaten_pct
     }
 
 # --- Pydantic Models (For Documentation) ---
+# Note: This is mainly for Swagger UI documentation. 
+# The actual update logic is handled in the route parameters.
 class PlayerUpdate(BaseModel):
     name: Optional[str] = None
     dob: Optional[str] = None
@@ -73,8 +95,14 @@ async def add_player(
         "dob": dob,
         "instagram_link": instagram_link,
         "facebook_link": facebook_link,
-        "photo_data": Binary(photo_content),  # Store binary data
-        "photo_content_type": photo.content_type
+        "photo_data": Binary(photo_content),
+        "photo_content_type": photo.content_type,
+        
+        # Initialize Stats to 0
+        "matches_played": 0,
+        "wins": 0,
+        "draws": 0,
+        "loss": 0
     }
     
     new_player = await collection.insert_one(player_data)
@@ -122,6 +150,11 @@ async def update_player(
     facebook_link: Optional[str] = Form(None),
     photo: Optional[UploadFile] = File(None)
 ):
+    """
+    Updates player profile info. 
+    NOTE: Match stats (wins, loss, etc.) are NOT accessible here, 
+    so they cannot be changed accidentally during a profile update.
+    """
     if not ObjectId.is_valid(id):
         raise HTTPException(status_code=400, detail="Invalid ID format")
 
@@ -159,6 +192,33 @@ async def delete_player(id: str):
         return {"message": "Player deleted successfully"}
     
     raise HTTPException(status_code=404, detail="Player not found")
+# ... existing imports ...
+
+@app.get("/fix-database-schema")
+async def fix_database_schema():
+    """
+    One-time script to add stats fields to all existing players.
+    """
+    # This query finds players who DO NOT have the 'matches_played' field yet
+    filter_query = {"matches_played": {"$exists": False}}
+    
+    # This update sets the default values
+    update_query = {
+        "$set": {
+            "matches_played": 0,
+            "wins": 0,
+            "draws": 0,
+            "loss": 0
+        }
+    }
+    
+    result = await collection.update_many(filter_query, update_query)
+    
+    return {
+        "message": "Database migration complete",
+        "matched_count": result.matched_count,
+        "modified_count": result.modified_count
+    }
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
