@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
 from bson import ObjectId, Binary
+from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
 import uvicorn
 from dotenv import load_dotenv
@@ -11,6 +12,15 @@ from dotenv import load_dotenv
 app = FastAPI()
 
 load_dotenv()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins (React, Mobile, Postman, etc.)
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods (GET, POST, PUT, DELETE)
+    allow_headers=["*"],  # Allows all headers
+)
+
 
 # Get the full URI directly from the environment
 MONGO_URI = os.getenv("MONGO_URI")
