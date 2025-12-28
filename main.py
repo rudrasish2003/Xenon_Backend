@@ -4,6 +4,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
 from bson import ObjectId, Binary
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Query
 from typing import Optional, List, Literal
 import uvicorn
 from dotenv import load_dotenv
@@ -148,10 +149,38 @@ async def add_player(name: str = Form(...), dob: str = Form(...), instagram_link
     return player_helper(await collection.find_one({"_id": new_player.inserted_id}))
 
 @app.get("/players/")
-async def get_all_players():
+async def get_players(
+    page: int = Query(1, ge=1), 
+    limit: int = Query(12, ge=1), 
+    search: str = Query("", description="Search by name")
+):
+    # 1. Build Query
+    query = {}
+    if search:
+        # Case-insensitive search
+        query["name"] = {"$regex": search, "$options": "i"}
+
+    # 2. Calculate Skip
+    skip = (page - 1) * limit
+
+    # 3. Get Total Count (for pagination UI)
+    total_count = await collection.count_documents(query)
+    total_pages = (total_count + limit - 1) // limit
+
+    # 4. Fetch Paginated Data
     players = []
-    async for player in collection.find(): players.append(player_helper(player))
-    return players
+    cursor = collection.find(query).skip(skip).limit(limit)
+    async for player in cursor:
+        players.append(player_helper(player))
+
+    # 5. Return Structured Response
+    return {
+        "players": players,
+        "total_players": total_count,
+        "total_pages": total_pages,
+        "current_page": page,
+        "limit": limit
+    }
 
 @app.get("/players/{id}")
 async def get_player(id: str):
@@ -277,8 +306,7 @@ async def delete_tournament(id: str):
 @app.delete("/teams/{id}")
 async def delete_team(id: str):
     if not ObjectId.is_valid(id): raise HTTPException(400, "Invalid ID")
-    # Note: Deleting a team does NOT rollback stats from matches already played.
-    # It just removes the team from the tournament list.
+    
     res = await teams_collection.delete_one({"_id": ObjectId(id)})
     if res.deleted_count == 1: return {"message": "Team deleted"}
     raise HTTPException(404, "Team not found")
@@ -396,15 +424,7 @@ async def update_match(id: str, match: MatchCreate):
     # 3. Delete old match record (effectively, we replace it)
     await matches_collection.delete_one({"_id": ObjectId(id)})
     
-    # 4. Record new match (This re-applies the new stats)
-    # We call the logic directly to avoid another HTTP request, 
-    # but for simplicity in this script, we can reuse the logic block.
-    # Ideally, refactor record_match logic into a function `process_match_stats`.
-    # For now, we will just call the same logic as record_match but return the ID.
-    
-    # ... (Re-run record match logic) ...
-    # Copy-paste the logic from record_match OR refactor. 
-    # For this snippet, I will just call the function logic:
+     
     
     match_wins = 0
     match_losses = 0
