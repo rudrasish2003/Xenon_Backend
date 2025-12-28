@@ -248,6 +248,32 @@ async def get_tournament_teams(tournament_id: str):
         teams.append(team)
     return teams
 
+@app.delete("/tournaments/{id}")
+async def delete_tournament(id: str):
+    if not ObjectId.is_valid(id):
+        raise HTTPException(status_code=400, detail="Invalid ID")
+
+    # 1. Check if tournament exists
+    tournament = await tournaments_collection.find_one({"_id": ObjectId(id)})
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    # 2. Fetch all matches in this tournament to rollback stats
+    # We must undo the stats for every match played in this tournament
+    async for match in matches_collection.find({"tournament_id": id}):
+        await rollback_match_stats(match)
+
+    # 3. Delete all Matches associated with this tournament
+    await matches_collection.delete_many({"tournament_id": id})
+
+    # 4. Delete all Teams associated with this tournament
+    await teams_collection.delete_many({"tournament_id": id})
+
+    # 5. Finally, delete the Tournament itself
+    await tournaments_collection.delete_one({"_id": ObjectId(id)})
+
+    return {"message": "Tournament and all associated data deleted successfully"}
+
 @app.delete("/teams/{id}")
 async def delete_team(id: str):
     if not ObjectId.is_valid(id): raise HTTPException(400, "Invalid ID")
