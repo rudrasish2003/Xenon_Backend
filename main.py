@@ -31,6 +31,7 @@ teams_collection = db.teams
 matches_collection = db.matches
 
 # --- Helper: Player Serializer ---
+# --- Helper: Player Serializer ---
 def player_helper(player) -> dict:
     matches = player.get("matches_played", 0)
     wins = player.get("wins", 0)
@@ -47,6 +48,8 @@ def player_helper(player) -> dict:
         "id": str(player["_id"]),
         "name": player["name"],
         "dob": player["dob"],
+        "role": player.get("role"),       # NEW: Added role
+        "country": player.get("country"), # NEW: Added country
         "instagram_link": player.get("instagram_link"),
         "facebook_link": player.get("facebook_link"),
         "photo_url": f"/players/{str(player['_id'])}/photo",
@@ -56,11 +59,13 @@ def player_helper(player) -> dict:
         "loss": loss,
         "unbeaten_percentage": unbeaten_pct
     }
-
+# --- Pydantic Models ---
 # --- Pydantic Models ---
 class PlayerUpdate(BaseModel):
     name: Optional[str] = None
     dob: Optional[str] = None
+    role: Optional[str] = None     # NEW: Added role
+    country: Optional[str] = None  # NEW: Added country
     instagram_link: Optional[str] = None
     facebook_link: Optional[str] = None
 
@@ -142,9 +147,30 @@ async def root():
 # ... (Include your existing PLAYER routes here: add_player, get_all_players, etc.) ...
 # [Paste previous Player Routes here if needed, omitting for brevity as they haven't changed]
 @app.post("/players/")
-async def add_player(name: str = Form(...), dob: str = Form(...), instagram_link: str = Form(...), facebook_link: str = Form(...), photo: UploadFile = File(...)):
+async def add_player(
+    name: str = Form(...), 
+    dob: str = Form(...), 
+    instagram_link: str = Form(...), 
+    facebook_link: str = Form(...), 
+    role: Optional[str] = Form(None),    # NEW: Optional role
+    country: Optional[str] = Form(None), # NEW: Optional country
+    photo: UploadFile = File(...)
+):
     photo_content = await photo.read()
-    player_data = {"name": name, "dob": dob, "instagram_link": instagram_link, "facebook_link": facebook_link, "photo_data": Binary(photo_content), "photo_content_type": photo.content_type, "matches_played": 0, "wins": 0, "draws": 0, "loss": 0}
+    player_data = {
+        "name": name, 
+        "dob": dob, 
+        "role": role,       # NEW
+        "country": country, # NEW
+        "instagram_link": instagram_link, 
+        "facebook_link": facebook_link, 
+        "photo_data": Binary(photo_content), 
+        "photo_content_type": photo.content_type, 
+        "matches_played": 0, 
+        "wins": 0, 
+        "draws": 0, 
+        "loss": 0
+    }
     new_player = await collection.insert_one(player_data)
     return player_helper(await collection.find_one({"_id": new_player.inserted_id}))
 
@@ -181,13 +207,35 @@ async def get_players(
         "current_page": page,
         "limit": limit
     }
-
-@app.get("/players/{id}")
-async def get_player(id: str):
+@app.put("/players/{id}")
+async def update_player(
+    id: str, 
+    name: Optional[str] = Form(None), 
+    dob: Optional[str] = Form(None), 
+    role: Optional[str] = Form(None),     # NEW
+    country: Optional[str] = Form(None),  # NEW
+    instagram_link: Optional[str] = Form(None), 
+    facebook_link: Optional[str] = Form(None), 
+    photo: Optional[UploadFile] = File(None)
+):
     if not ObjectId.is_valid(id): raise HTTPException(400, "Invalid ID")
-    p = await collection.find_one({"_id": ObjectId(id)})
-    if p: return player_helper(p)
-    raise HTTPException(404, "Not Found")
+    
+    update_data = {}
+    if name: update_data["name"] = name
+    if dob: update_data["dob"] = dob
+    if role: update_data["role"] = role          # NEW
+    if country: update_data["country"] = country # NEW
+    if instagram_link: update_data["instagram_link"] = instagram_link
+    if facebook_link: update_data["facebook_link"] = facebook_link
+    if photo:
+        content = await photo.read()
+        update_data["photo_data"] = Binary(content)
+        update_data["photo_content_type"] = photo.content_type
+        
+    if not update_data: raise HTTPException(400, "No data provided to update")
+    
+    await collection.update_one({"_id": ObjectId(id)}, {"$set": update_data})
+    return player_helper(await collection.find_one({"_id": ObjectId(id)}))
 
 @app.get("/players/{id}/photo")
 async def get_player_photo(id: str):
